@@ -17,6 +17,73 @@ if (!TOKEN || !GENERAL_CHANNEL_ID || !ADMIN || !GUILD || !MINUTES_BEFORE_SHUTDOW
 
 import { REST, Routes } from 'discord.js';
 
+// fetch all server softwares from bukkit.org 
+const supportedVersion = await fetch("https://api.papermc.io/v2/projects/paper", {
+  "headers": {
+    "accept": "*/*",
+    "accept-language": "en-US,en;q=0.9",
+    "priority": "u=1, i",
+    "sec-ch-ua": "\"Not/A)Brand\";v=\"8\", \"Chromium\";v=\"126\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+    "Referer": "https://papermc.io/",
+    "Referrer-Policy": "strict-origin-when-cross-origin"
+  },
+  "body": null,
+  "method": "GET"
+}).then(res => res.json());
+
+type Build = {
+  name: string,
+  software: string,
+  url: string
+}
+
+let builds = new Map<string, Build>();
+if (!fs.existsSync("./builds.json")) {
+  for (const version of supportedVersion.versions) {
+    console.log("Fetching Paper Builds...")
+    const data = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}/builds`, {
+      "headers": {
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "priority": "u=1, i",
+        "sec-ch-ua": "\"Not/A)Brand\";v=\"8\", \"Chromium\";v=\"126\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Windows\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "Referer": "https://papermc.io/",
+        "Referrer-Policy": "strict-origin-when-cross-origin"
+      },
+      "body": null,
+      "method": "GET"
+    }).then(res => res.json());
+    // https://api.papermc.io/v2/projects/paper/versions/1.20.6/builds/147/downloads/paper-1.20.6-147.jar
+    const build = data.builds[0];
+    builds.set(`paper-${version}`, {
+      name: version,
+      software: "paper",
+      url: `https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${build.build}/downloads/paper-${version}-${build.build}.jar`
+    })
+
+  }
+
+  fs.writeFileSync("./builds.json", JSON.stringify(builds))
+}
+
+const buildsToSelect = Array.from(builds.keys()).map((key) => {
+  return {
+    name: key,
+    value: key
+  };
+});
+
+// save builds to a file to prevent ddos
 const executeCommand = new SlashCommandBuilder()
   .setName('execute')
   .setDescription('Executes a command on the server as console.')
@@ -38,6 +105,12 @@ const modCommand = new SlashCommandBuilder()
     .addStringOption(option => option.setName('mod').setDescription('The mod to remove.').setRequired(true)))
   .addSubcommand(subcommand => subcommand.setName('list').setDescription('Lists all mods.'))
 
+const serverCommand = new SlashCommandBuilder()
+  .setName('server')
+  .setDescription('Select the server software.')
+  .addSubcommand(subcommand => subcommand.setName('select').setDescription('Select the server software.').addStringOption(option => option.setName('software').setDescription('The server software to select.').setRequired(true)
+    .addChoices()
+  ))
 const commands = [
   {
     name: 'ping',
