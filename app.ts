@@ -8,7 +8,9 @@ const host = 'localhost';
 const port = 25565;
 const TOKEN = process.env.DISCORD_TOKEN;
 const GENERAL_CHANNEL_ID = process.env.GENERAL_CHANNEL_ID;
-if (!TOKEN || !GENERAL_CHANNEL_ID) {
+const ADMIN = process.env.ADMIN_ID;
+const GUILD = process.env.GUILD_ID;
+if (!TOKEN || !GENERAL_CHANNEL_ID || !ADMIN || !GUILD) {
   throw new Error("No discord token or client id provided.")
 }
 
@@ -68,7 +70,7 @@ client.on('ready', async () => {
   try {
     console.log('Started refreshing application (/) commands.');
 
-    await rest.put(Routes.applicationGuildCommands(client.user!!.id, "1191910832070721687"), { body: commands });
+    await rest.put(Routes.applicationGuildCommands(client.user!!.id, GUILD), { body: commands });
 
     console.log('Successfully reloaded application (/) commands.');
   } catch (error) {
@@ -105,7 +107,7 @@ client.on('interactionCreate', async interaction => {
     remoteStop(interaction.user.username);
   }
   else if (interaction.commandName === 'execute') {
-    if (interaction.user.id !== "404070748391473155") {
+    if (interaction.user.id !== ADMIN) {
       await interaction.reply("You cannot do this action.")
       return;
     }
@@ -123,7 +125,7 @@ client.on('interactionCreate', async interaction => {
     runCommand(command);
   }
   else if (interaction.commandName === 'mod') {
-    if (interaction.user.id !== "404070748391473155") {
+    if (interaction.user.id !== ADMIN) {
       await interaction.reply("You cannot do this action.")
       return;
     }
@@ -176,9 +178,8 @@ client.on('interactionCreate', async interaction => {
       })
     }
   }
-
   else if (interaction.commandName === 'world') {
-    if (interaction.user.id !== "404070748391473155") {
+    if (interaction.user.id !== ADMIN) {
       await interaction.reply("You cannot do this action.")
       return;
     }
