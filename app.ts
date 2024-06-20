@@ -122,7 +122,7 @@ client.on('interactionCreate', async interaction => {
       return
     }
 
-    await interaction.reply("Executing command: `$ " + command + "`")
+    await interaction.reply("Executing command: `/" + command + "`")
     runCommand(command);
   }
   else if (interaction.commandName === 'mod') {
