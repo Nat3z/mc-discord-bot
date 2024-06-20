@@ -1,7 +1,7 @@
 import mc from 'minecraft-protocol'
 import { spawn } from 'child_process';
 import fs from 'fs';
-import { ActivityType, Client, EmbedBuilder, GatewayIntentBits, SlashCommandBuilder, TextChannel } from 'discord.js';
+import { ActivityType, CacheType, Client, EmbedBuilder, GatewayIntentBits, Interaction, SlashCommandBuilder, TextChannel } from 'discord.js';
 import request from 'request';
 
 const host = 'localhost';
@@ -33,13 +33,10 @@ const worldCommand = new SlashCommandBuilder()
 const modCommand = new SlashCommandBuilder()
   .setName('mod')
   .setDescription('Add/Remove a mod from the server.')
-  .addStringOption(option => option.setName('type').setDescription('The type of action to take').addChoices(
-    { name: 'Add', value: 'add' },
-    { name: "Remove", value: "remove" },
-    { name: 'List', value: 'list' }
-  ).setRequired(true))
-  .addStringOption(option => option.setName('mod').setDescription('The mod to remove.').setRequired(false))
-  .addAttachmentOption(option => option.setName('file').setDescription('The mod to upload.').setRequired(false))
+  .addSubcommand(subcommand => subcommand.setName('add').setDescription('Add a mod.').addAttachmentOption(option => option.setName('file').setDescription('The mod to upload.').setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('remove').setDescription('Removes a mod.')
+    .addStringOption(option => option.setName('mod').setDescription('The mod to remove.').setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('list').setDescription('Lists all mods.'))
 
 const commands = [
   {
@@ -82,10 +79,25 @@ client.on('ready', async () => {
   client.user!!.setActivity("Minecraft Server", { type: ActivityType.Watching })
 });
 
+function checkIfServerSelected(interaction: Interaction<CacheType>): Boolean {
+  if (!interaction.isChatInputCommand()) return false;
+  if (!fs.existsSync("./mc/")) {
+    const embed = new EmbedBuilder()
+      .setTitle("Server not selected.")
+      .setColor("Red")
+      .setDescription("Please select a server software first by using /server select <sofware>")
+
+    interaction.reply({ embeds: [embed] })
+    return false;
+  }
+  return true;
+}
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
   if (interaction.commandName === 'start') {
+
+    if (!checkIfServerSelected(interaction)) return;
     if (online) {
       await interaction.reply("Server is already online.")
       return
@@ -99,6 +111,7 @@ client.on('interactionCreate', async interaction => {
     bootupServer(interaction.user.id);
   }
   else if (interaction.commandName === 'stop') {
+    if (!checkIfServerSelected(interaction)) return;
     if (!online) {
       await interaction.reply("Server offline already.")
       return
@@ -126,14 +139,15 @@ client.on('interactionCreate', async interaction => {
     runCommand(command);
   }
   else if (interaction.commandName === 'mod') {
+    if (!checkIfServerSelected(interaction)) return;
     if (interaction.user.id !== ADMIN) {
       await interaction.reply("You cannot do this action.")
       return;
     }
-    let type = interaction.options.getString('type');
-    const file = interaction.options.getAttachment('file');
 
-    if (type === 'add') {
+    let subcommand = interaction.options.getSubcommand();
+    if (subcommand === 'add') {
+      const file = interaction.options.getAttachment('file');
       if (!file) {
         await interaction.reply("No file provided.")
         return;
@@ -147,7 +161,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.editReply("Mod added!!!")
       })
     }
-    else if (type === 'list') {
+    else if (subcommand === 'list') {
       // read files inthe mods folder
       const mods = await fs.promises.readdir("./mc/mods/")
       if (mods.length === 0) {
@@ -161,7 +175,7 @@ client.on('interactionCreate', async interaction => {
 
       await interaction.reply({ embeds: [embed] })
     }
-    else if (type === 'remove') {
+    else if (subcommand === 'remove') {
       let mod = interaction.options.getString('mod');
       if (!mod) {
         await interaction.reply("No mod provided.")
@@ -180,6 +194,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
   else if (interaction.commandName === 'world') {
+    if (!checkIfServerSelected(interaction)) return;
     if (interaction.user.id !== ADMIN) {
       await interaction.reply("You cannot do this action.")
       return;
@@ -189,6 +204,13 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply("Server is online. Please stop the server before doing this action.")
       return;
     }
+
+    if (!fs.existsSync("./mc/worlds/")) fs.mkdirSync("./mc/worlds/");
+    if (!fs.existsSync("./mc/.world")) {
+      fs.writeFileSync("./mc/.world", "default");
+      fs.mkdirSync("./mc/worlds/default");
+    }
+
     let subcommand = interaction.options.getSubcommand();
     if (subcommand === 'add') {
       let world = interaction.options.getAttachment('world');
