@@ -7,8 +7,8 @@ import request from 'request';
 const host = 'localhost';
 const port = 25565;
 const TOKEN = process.env.DISCORD_TOKEN;
-
-if (!TOKEN) {
+const GENERAL_CHANNEL_ID = process.env.GENERAL_CHANNEL_ID;
+if (!TOKEN || !GENERAL_CHANNEL_ID) {
   throw new Error("No discord token or client id provided.")
 }
 
@@ -22,10 +22,10 @@ const executeCommand = new SlashCommandBuilder()
 const worldCommand = new SlashCommandBuilder()
   .setName('world')
   .setDescription('Set, add, or remove a world.')
-  .addSubcommand(subcommand => subcommand.setName('add').addAttachmentOption(option => option.setName('world').setDescription('The world to add').setRequired(true)))
-  .addSubcommand(subcommand => subcommand.setName('remove').addAttachmentOption(option => option.setName('world').setDescription('The world to remove').setRequired(true)))
-  .addSubcommand(subcommand => subcommand.setName('list'))
-  .addSubcommand(subcommand => subcommand.setName('set').addStringOption(option => option.setName('world').setDescription('The world name to set.').setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('add').setDescription("Add a world.").addAttachmentOption(option => option.setName('world').setDescription('The world to add').setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('remove').setDescription("Remove a world.").addStringOption(option => option.setName('world').setDescription('The world to remove').setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('list').setDescription('List all worlds.'))
+  .addSubcommand(subcommand => subcommand.setName('set').setDescription("Set the world.").addStringOption(option => option.setName('world').setDescription('The world name to set.').setRequired(true)))
 
 const modCommand = new SlashCommandBuilder()
   .setName('mod')
@@ -75,7 +75,7 @@ client.on('ready', async () => {
     console.error(error);
   }
 
-  generalChannel = await client.channels.fetch("1191910832615997493") as TextChannel;
+  generalChannel = await client.channels.fetch(GENERAL_CHANNEL_ID) as TextChannel;
   client.user!!.setActivity("Minecraft Server", { type: ActivityType.Watching })
 });
 
@@ -102,7 +102,7 @@ client.on('interactionCreate', async interaction => {
     }
 
     await interaction.reply("Stopping server...")
-    remoteStop(interaction.user.id);
+    remoteStop(interaction.user.username);
   }
   else if (interaction.commandName === 'execute') {
     if (interaction.user.id !== "404070748391473155") {
@@ -176,6 +176,127 @@ client.on('interactionCreate', async interaction => {
       })
     }
   }
+
+  else if (interaction.commandName === 'world') {
+    if (interaction.user.id !== "404070748391473155") {
+      await interaction.reply("You cannot do this action.")
+      return;
+    }
+
+    if (online) {
+      await interaction.reply("Server is online. Please stop the server before doing this action.")
+      return;
+    }
+    let subcommand = interaction.options.getSubcommand();
+    if (subcommand === 'add') {
+      let world = interaction.options.getAttachment('world');
+      if (!world) {
+        await interaction.reply("No world provided.")
+        return;
+      }
+      await interaction.reply("Adding world...")
+      fs.mkdir("./mc/worlds/" + world.name, { recursive: true }, (err) => { console.error(err) })
+
+      request.get(world.url).pipe(fs.createWriteStream("./mc/worlds/" + world.name + "/world.zip")).on('close', async () => {
+        if (!world) throw new Error("World was somehow undefined..?")
+        // unzip the file and remove the zip
+        const child = spawn('unzip', ['./mc/worlds/' + world.name + '/world.zip', '-d', './mc/worlds/' + world.name])
+        child.on('exit', () => {
+          fs.unlink("./mc/worlds/" + world!!.name + "/world.zip", (err) => { if (err) console.error(err) })
+        })
+        await interaction.editReply("World added!!!")
+      })
+    }
+    else if (subcommand === 'remove') {
+      let world = interaction.options.getString('world');
+      if (!world) {
+        await interaction.reply("No world provided.")
+        return;
+      }
+      await interaction.reply("Removing world...")
+
+
+      const data = fs.existsSync("./mc/.world") ? await fs.promises.readFile("./mc/.world", "utf8") : undefined;
+      if (data === world) {
+        await interaction.editReply("Cannot remove the current world.")
+        return;
+      }
+      fs.unlink("./mc/worlds/" + world, async (err) => {
+        if (err) {
+          await interaction.editReply("Failed to remove world. Reason: " + err.message)
+        }
+        else {
+          await interaction.editReply("World removed.")
+        }
+      })
+    }
+    else if (subcommand === 'list') {
+      const worlds = await fs.promises.readdir("./mc/worlds/")
+      if (worlds.length === 0) {
+        await interaction.reply("No worlds found.")
+        return
+      }
+      const embed = new EmbedBuilder()
+        .setTitle("Worlds")
+        .setColor("Aqua")
+        .setDescription(worlds.join("\n"))
+
+      await interaction.reply({ embeds: [embed] })
+    }
+    else if (subcommand === 'set') {
+      let world = interaction.options.getString('world');
+      if (!world) {
+        await interaction.reply("No world provided.")
+        return;
+      }
+
+      if (!fs.existsSync("./mc/worlds/" + world)) {
+        await interaction.reply("World doesn't exist.")
+        return;
+      }
+      await interaction.reply("Setting world...")
+      // save current world to the worlds folder
+      // read the "world" file to get the current world
+      const data = fs.existsSync("./mc/.world") ? await fs.promises.readFile("./mc/.world", "utf8") : undefined;
+      const replaceWorld = () => {
+        // copy the new world folder to the world folder on the server
+        const child = spawn('rm', ['-rf', './mc/world/'])
+        child.on('exit', () => {
+          const child = spawn('cp', ['-ruT', './mc/worlds/' + world!! + "/", './mc/world/'])
+          child.on('exit', () => {
+            interaction.editReply("World Updated!")
+          })
+        });
+
+      }
+
+      if (data) {
+
+        const child = spawn('cp', ['-ruT', './mc/world/', './mc/worlds/' + data + "/"])
+        child.on('exit', () => {
+          // write the new world to the file
+          fs.writeFile("./mc/.world", world!!, (err) => {
+            if (err) {
+              console.error(err);
+              return;
+            }
+          })
+          replaceWorld();
+        })
+      }
+      else {
+        fs.writeFile("./mc/.world", world!!, (err) => {
+          if (err) {
+            console.error(err)
+          }
+        })
+
+        replaceWorld();
+      }
+
+    }
+
+  }
   else if (interaction.commandName === 'ping') {
     await interaction.reply("Pong!")
   }
@@ -210,7 +331,7 @@ function bootupServer(starter: string) {
   remoteStop = (starter: string) => {
     child.stdin.write('/stop\r');
     clearInterval(interval);
-    sendShutdownMessage("Server stopped by <@" + starter + ">")
+    sendShutdownMessage("Server stopped by " + starter)
   }
 
   runCommand = (command) => {
