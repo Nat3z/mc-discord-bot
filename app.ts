@@ -10,7 +10,8 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const GENERAL_CHANNEL_ID = process.env.GENERAL_CHANNEL_ID;
 const ADMIN = process.env.ADMIN_ID;
 const GUILD = process.env.GUILD_ID;
-if (!TOKEN || !GENERAL_CHANNEL_ID || !ADMIN || !GUILD) {
+const MINUTES_BEFORE_SHUTDOWN_INACTIVE = process.env.MINUTES_BEFORE_SHUTDOWN_INACTIVE;
+if (!TOKEN || !GENERAL_CHANNEL_ID || !ADMIN || !GUILD || !MINUTES_BEFORE_SHUTDOWN_INACTIVE) {
   throw new Error("No discord token or client id provided.")
 }
 
@@ -358,7 +359,7 @@ function bootupServer(starter: string) {
         }
       })
       // 15 mins
-    }, 15 * 60 * 1000)
+    }, parseInt(MINUTES_BEFORE_SHUTDOWN_INACTIVE!!) * 60 * 1000)
   }
   const interval_isOnline = setInterval(() => {
     mc.ping({
