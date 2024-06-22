@@ -1,11 +1,25 @@
 import mc from 'minecraft-protocol'
 import { spawn } from 'child_process';
 import fs from 'fs';
-import { ActivityType, Client, EmbedBuilder, GatewayIntentBits, SlashCommandBuilder, TextChannel } from 'discord.js';
+import { ActivityType, CacheType, Client, EmbedBuilder, GatewayIntentBits, Interaction, SlashCommandBuilder, TextChannel, PermissionFlagsBits } from 'discord.js';
 import request from 'request';
 
 const host = 'localhost';
-const port = 25565;
+
+type Options = {
+  port: number,
+  role_allowed: string
+}
+
+let Settings: Options = {
+  port: 25565,
+  role_allowed: ""
+};
+if (fs.existsSync("./settings.json")) {
+  Settings = JSON.parse(fs.readFileSync("./settings.json", "utf8"));
+}
+
+let PORT = Settings.port;
 const TOKEN = process.env.DISCORD_TOKEN;
 const GENERAL_CHANNEL_ID = process.env.GENERAL_CHANNEL_ID;
 const ADMIN = process.env.ADMIN_ID;
@@ -16,7 +30,97 @@ if (!TOKEN || !GENERAL_CHANNEL_ID || !ADMIN || !GUILD || !MINUTES_BEFORE_SHUTDOW
 }
 
 import { REST, Routes } from 'discord.js';
+import { serve } from 'bun';
 
+// fetch all server softwares from bukkit.org 
+const supportedVersion = await fetch("https://api.papermc.io/v2/projects/paper", {
+  "headers": {
+    "accept": "*/*",
+    "accept-language": "en-US,en;q=0.9",
+    "priority": "u=1, i",
+    "sec-ch-ua": "\"Not/A)Brand\";v=\"8\", \"Chromium\";v=\"126\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+    "Referer": "https://papermc.io/",
+    "Referrer-Policy": "strict-origin-when-cross-origin"
+  },
+  "body": null,
+  "method": "GET"
+}).then(res => res.json());
+
+type Build = {
+  name: string,
+  software: string,
+  url: string
+}
+
+let builds = new Map<string, Build>();
+const filteredVersions = ["1.19.4", "1.8.9", "1.12.2", "1.20.6", "1.20.1", "1.21"]
+async function updateBuilds() {
+  for (const version of supportedVersion.versions) {
+    if (!filteredVersions.includes(version)) continue;
+    console.log("Fetching Paper Build " + version)
+    const data = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}/builds`, {
+      "headers": {
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "priority": "u=1, i",
+        "sec-ch-ua": "\"Not/A)Brand\";v=\"8\", \"Chromium\";v=\"126\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Windows\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "Referer": "https://papermc.io/",
+        "Referrer-Policy": "strict-origin-when-cross-origin"
+      },
+      "body": null,
+      "method": "GET"
+    }).then(res => res.json());
+    // https://api.papermc.io/v2/projects/paper/versions/1.20.6/builds/147/downloads/paper-1.20.6-147.jar
+    const build = data.builds[0];
+    builds.set(`paper-${version}`, {
+      name: version,
+      software: "paper",
+      url: `https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${build.build}/downloads/paper-${version}-${build.build}.jar`
+    })
+
+  }
+  for (const version of filteredVersions) {
+    if (version === "1.8.9" || version === "1.12.2") continue;
+    builds.set(`fabric-${version}`, {
+      name: version,
+      software: "fabric",
+      url: `https://meta.fabricmc.net/v2/versions/loader/${version}/0.15.11/1.0.1/server/jar`
+    })
+  }
+  fs.writeFileSync("./builds.json", JSON.stringify(({ "time": Date.now(), ...Object.fromEntries(builds) })))
+}
+if (!fs.existsSync("./builds.json")) {
+  await updateBuilds();
+}
+else {
+  const buildJSONObj = JSON.parse(fs.readFileSync("./builds.json", "utf8"))
+  if (Date.now() - buildJSONObj.time > 1000 * 60 * 60 * 24) {
+    await updateBuilds();
+  } else {
+    delete buildJSONObj.time;
+    builds = new Map<string, Build>(Object.entries(buildJSONObj))
+  }
+}
+
+const buildsToSelect = Array.from(builds.keys()).map((key) => {
+  return {
+    name: key,
+    value: key
+  };
+});
+
+
+// save builds to a file to prevent ddos
 const executeCommand = new SlashCommandBuilder()
   .setName('execute')
   .setDescription('Executes a command on the server as console.')
@@ -33,13 +137,32 @@ const worldCommand = new SlashCommandBuilder()
 const modCommand = new SlashCommandBuilder()
   .setName('mod')
   .setDescription('Add/Remove a mod from the server.')
-  .addStringOption(option => option.setName('type').setDescription('The type of action to take').addChoices(
-    { name: 'Add', value: 'add' },
-    { name: "Remove", value: "remove" },
-    { name: 'List', value: 'list' }
-  ).setRequired(true))
-  .addStringOption(option => option.setName('mod').setDescription('The mod to remove.').setRequired(false))
-  .addAttachmentOption(option => option.setName('file').setDescription('The mod to upload.').setRequired(false))
+  .addSubcommand(subcommand => subcommand.setName('add').setDescription('Add a mod.').addAttachmentOption(option => option.setName('file').setDescription('The mod to upload.').setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('remove').setDescription('Removes a mod.')
+    .addStringOption(option => option.setName('mod').setDescription('The mod to remove.').setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('list').setDescription('Lists all mods.'))
+
+const serverCommand = new SlashCommandBuilder()
+  .setName('server')
+  .setDescription('Select the server software.')
+  .addSubcommand(subcommand => subcommand.setName('select').setDescription('Select the name of the server software.').addStringOption(option => option.setName("software").setDescription("The server software name.").setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('list').setDescription('List all server software.'))
+  .addSubcommand(subcommand => subcommand.setName('remove').setDescription('Remove the server software.').addStringOption(option => option.setName("software").setDescription("The server software name.").setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('setup').setDescription('Creates a new server software.').addStringOption(option => option.setName("name").setDescription("The name of your server.").setRequired(true)).addStringOption(option => option.setName('software').setDescription('The server software to select.').addChoices(buildsToSelect).setRequired(true)))
+
+const configCommand = new SlashCommandBuilder()
+  .setName('config')
+  .setDescription('Configure the bot and default server settings.')
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .addSubcommandGroup(subcommandGroup => subcommandGroup.setName('set-server').setDescription('Select the name of the server software.')
+    .addSubcommand(subcommand => subcommand.setName("set-properties")
+      .setDescription("Set the defauult server.properties file.")
+      .addAttachmentOption(option => option.setName('file').setDescription('The server.properties file to upload.').setRequired(true))
+    )
+    .addSubcommand(subcommand => subcommand.setName('set-port').setDescription('Set the port of the server.')
+      .addIntegerOption(option => option.setName('port').setDescription('The port to set.').setRequired(true))
+    )
+  )
 
 const commands = [
   {
@@ -56,7 +179,9 @@ const commands = [
   },
   executeCommand.toJSON(),
   modCommand.toJSON(),
-  worldCommand.toJSON()
+  worldCommand.toJSON(),
+  serverCommand.toJSON(),
+  configCommand.toJSON()
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -82,10 +207,25 @@ client.on('ready', async () => {
   client.user!!.setActivity("Minecraft Server", { type: ActivityType.Watching })
 });
 
+function checkIfServerSelected(interaction: Interaction<CacheType>): Boolean {
+  if (!interaction.isChatInputCommand()) return false;
+  if (!fs.existsSync("./mc/")) {
+    const embed = new EmbedBuilder()
+      .setTitle("Server not selected.")
+      .setColor("Red")
+      .setDescription("Please select a server software first by using /server select <sofware>")
+
+    interaction.reply({ embeds: [embed] })
+    return false;
+  }
+  return true;
+}
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
   if (interaction.commandName === 'start') {
+
+    if (!checkIfServerSelected(interaction)) return;
     if (online) {
       await interaction.reply("Server is already online.")
       return
@@ -99,6 +239,7 @@ client.on('interactionCreate', async interaction => {
     bootupServer(interaction.user.id);
   }
   else if (interaction.commandName === 'stop') {
+    if (!checkIfServerSelected(interaction)) return;
     if (!online) {
       await interaction.reply("Server offline already.")
       return
@@ -126,14 +267,15 @@ client.on('interactionCreate', async interaction => {
     runCommand(command);
   }
   else if (interaction.commandName === 'mod') {
+    if (!checkIfServerSelected(interaction)) return;
     if (interaction.user.id !== ADMIN) {
       await interaction.reply("You cannot do this action.")
       return;
     }
-    let type = interaction.options.getString('type');
-    const file = interaction.options.getAttachment('file');
 
-    if (type === 'add') {
+    let subcommand = interaction.options.getSubcommand();
+    if (subcommand === 'add') {
+      const file = interaction.options.getAttachment('file');
       if (!file) {
         await interaction.reply("No file provided.")
         return;
@@ -147,7 +289,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.editReply("Mod added!!!")
       })
     }
-    else if (type === 'list') {
+    else if (subcommand === 'list') {
       // read files inthe mods folder
       const mods = await fs.promises.readdir("./mc/mods/")
       if (mods.length === 0) {
@@ -161,7 +303,7 @@ client.on('interactionCreate', async interaction => {
 
       await interaction.reply({ embeds: [embed] })
     }
-    else if (type === 'remove') {
+    else if (subcommand === 'remove') {
       let mod = interaction.options.getString('mod');
       if (!mod) {
         await interaction.reply("No mod provided.")
@@ -180,6 +322,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
   else if (interaction.commandName === 'world') {
+    if (!checkIfServerSelected(interaction)) return;
     if (interaction.user.id !== ADMIN) {
       await interaction.reply("You cannot do this action.")
       return;
@@ -189,6 +332,13 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply("Server is online. Please stop the server before doing this action.")
       return;
     }
+
+    if (!fs.existsSync("./mc/worlds/")) fs.mkdirSync("./mc/worlds/");
+    if (!fs.existsSync("./mc/.world")) {
+      fs.writeFileSync("./mc/.world", "default");
+      fs.mkdirSync("./mc/worlds/default");
+    }
+
     let subcommand = interaction.options.getSubcommand();
     if (subcommand === 'add') {
       let world = interaction.options.getAttachment('world');
@@ -297,6 +447,149 @@ client.on('interactionCreate', async interaction => {
       }
 
     }
+  }
+
+  else if (interaction.commandName === 'server') {
+    if (interaction.user.id !== ADMIN) {
+      await interaction.reply("You cannot do this action.")
+      return;
+    }
+
+    let subcommand = interaction.options.getSubcommand();
+    if (subcommand === "setup") {
+      let software = interaction.options.getString('software');
+      let name = interaction.options.getString('name');
+      if (!software) {
+        await interaction.reply("No software provided.")
+        return;
+      }
+
+      if (fs.existsSync("./" + name + "-server")) {
+        await interaction.reply("Server with that name already exists.")
+        return;
+      }
+
+      if (fs.existsSync("./mc/")) {
+        // deselect by changing name by reading .software file
+        if (!fs.existsSync("./mc/.software")) {
+          fs.writeFileSync("./mc/.software", "default\ndefault")
+        }
+        const data = fs.existsSync("./mc/.software") ? fs.readFileSync("./mc/.software", "utf8").split("\n").length > 1 ? fs.readFileSync("./mc/.software", "utf8").split("\n")[1] : "default" : "default";
+        fs.renameSync("./mc/", data + "-server");
+      }
+      if (!fs.existsSync("./mc/")) fs.mkdirSync("./mc/");
+
+      const build = builds.get(software);
+      if (!build) {
+        await interaction.reply("Invalid software.")
+        return;
+      }
+
+      await interaction.reply("Downloading server software... Please wait.")
+      await new Promise<void>((resolve, _) => request.get(build.url).pipe(fs.createWriteStream("./mc/server.jar")).on('close', async () => {
+        await interaction.editReply("Server software downloaded. Running server setup... By using this software, you agree to the Mojang EULA.")
+        resolve();
+      }))
+      await new Promise<void>((resolve, _) => setTimeout(resolve, 2500))
+      fs.writeFileSync("./mc/.software", build.software + "-" + build.name + "\n" + name)
+      if (!fs.existsSync("./mc/.world")) fs.writeFileSync("./mc/.world", "default");
+      if (!fs.existsSync("./mc/worlds/")) fs.mkdirSync("./mc/worlds/");
+
+      fs.writeFileSync("./mc/eula.txt", "eula=true")
+      if (fs.existsSync("./default-server.properties")) {
+        fs.copyFileSync("./default-server.properties", "./mc/server.properties")
+      }
+      interaction.editReply("Server software selected!!")
+    }
+
+    else if (subcommand === "select") {
+      let software = interaction.options.getString('software');
+      // check if folder exists
+      if (!fs.existsSync("./" + software + "-server")) {
+        interaction.reply("Server software does not exist.")
+        return;
+      }
+
+      if (fs.existsSync("./mc/")) {
+        // deselect by changing name by reading .software file
+        //
+        if (!fs.existsSync("./mc/.software")) {
+          fs.writeFileSync("./mc/.software", "default\ndefaulut");
+        }
+        const data = fs.existsSync("./mc/.software") ? fs.readFileSync("./mc/.software", "utf8").split("\n").length > 1 ? fs.readFileSync("./mc/.software", "utf8").split("\n")[1] : "default" : "default";
+        fs.renameSync("./mc/", data + "-server");
+      }
+      fs.renameSync("./" + software + "-server", "./mc/");
+      await interaction.reply("Server software selected.")
+    }
+    else if (subcommand === "list") {
+      let servers = await fs.promises.readdir("./")
+      servers = servers.filter((server) => server.includes("-server"))
+      if (fs.existsSync("./mc/")) {
+        servers = ["mc", ...servers]
+      }
+
+      const mappedSoftwares = new Map<string, string>();
+      servers.forEach((server) => {
+        const data = fs.existsSync("./" + server + "/.software") ? fs.readFileSync("./" + server + "/.software", "utf8").split("\n").length > 1 ? fs.readFileSync("./" + server + "/.software", "utf8").split("\n") : ["default", "default"] : ["default", "default"];
+        mappedSoftwares.set(data[1], data[0]);
+      })
+      let serversArray = Array.from(mappedSoftwares).map(([server, software]) => "**" + server + "** - " + software)
+
+      if (serversArray.length > 0) {
+        serversArray[0] = serversArray[0] + " **(Selected)**"
+      }
+      serversArray = serversArray.length === 0 ? ["No servers found."] : serversArray;
+      const embed = new EmbedBuilder()
+        .setTitle("Servers")
+        .setColor("Aqua")
+        .setDescription(serversArray.join("\n"))
+      await interaction.reply({ embeds: [embed] })
+
+    }
+    else if (subcommand === "remove") {
+      let software = interaction.options.getString('software');
+      if (!software) {
+        await interaction.reply("No software provided.")
+        return;
+      }
+
+      if (!fs.existsSync("./" + software + "-server")) {
+        await interaction.reply("Server software does not exist or is currently selected. Please switch softwares before removing.")
+        return;
+      }
+      fs.rmdirSync("./" + software + "-server", { recursive: true });
+      await interaction.reply("Server software Removed");
+    }
+  }
+  else if (interaction.commandName === "config") {
+    const subcommandGroup = interaction.options.getSubcommandGroup();
+    if (subcommandGroup === "set-server") {
+      const subcommand = interaction.options.getSubcommand();
+      if (subcommand === "set-properties") {
+        const file = interaction.options.getAttachment('file');
+        if (!file) {
+          await interaction.reply("No file provided.")
+          return;
+        }
+
+        await interaction.reply("Setting server.properties...")
+        request.get(file.url).pipe(fs.createWriteStream("./default-server.properties")).on('close', async () => {
+          await interaction.editReply("Updated default server.properties.")
+        })
+      }
+      else if (subcommand === "set-port") {
+        const port = interaction.options.getInteger('port');
+        if (!port) {
+          await interaction.reply("No port provided.")
+          return;
+        }
+        PORT = port;
+        Settings.port = port;
+        fs.writeFileSync("./settings.json", JSON.stringify(Settings))
+        await interaction.editReply("Port set to " + port)
+      }
+    }
 
   }
   else if (interaction.commandName === 'ping') {
@@ -343,7 +636,7 @@ function bootupServer(starter: string) {
     interval = setInterval(() => {
       mc.ping({
         host,
-        port,
+        port: PORT,
         version: "1.20.1"
       }, (err, res) => {
         res = res as mc.NewPingResult;
@@ -364,7 +657,7 @@ function bootupServer(starter: string) {
   const interval_isOnline = setInterval(() => {
     mc.ping({
       host: host,
-      port: port,
+      port: PORT,
       version: "1.20.1",
     }, (err, res) => {
       res = res as mc.NewPingResult;
@@ -376,7 +669,7 @@ function bootupServer(starter: string) {
       online = true;
       clearInterval(interval_isOnline);
       checkIfPlayersAreOnline();
-      console.log("Server detected online! " + host + ":" + port)
+      console.log("Server detected online! " + host + ":" + PORT)
 
       const embed = new EmbedBuilder()
         .setTitle("Server online!")
