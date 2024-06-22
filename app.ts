@@ -2,6 +2,7 @@ import mc from 'minecraft-protocol'
 import { spawn } from 'child_process';
 import fs from 'fs';
 import { ActivityType, CacheType, Client, EmbedBuilder, GatewayIntentBits, Interaction, SlashCommandBuilder, TextChannel, PermissionFlagsBits } from 'discord.js';
+import { REST, Routes } from 'discord.js';
 import request from 'request';
 
 const host = 'localhost';
@@ -28,10 +29,6 @@ const MINUTES_BEFORE_SHUTDOWN_INACTIVE = process.env.MINUTES_BEFORE_SHUTDOWN_INA
 if (!TOKEN || !GENERAL_CHANNEL_ID || !ADMIN || !GUILD || !MINUTES_BEFORE_SHUTDOWN_INACTIVE) {
   throw new Error("No discord token or client id provided.")
 }
-
-import { REST, Routes } from 'discord.js';
-import { serve } from 'bun';
-
 // fetch all server softwares from bukkit.org 
 const supportedVersion = await fetch("https://api.papermc.io/v2/projects/paper", {
   "headers": {
@@ -491,7 +488,7 @@ client.on('interactionCreate', async interaction => {
         resolve();
       }))
       await new Promise<void>((resolve, _) => setTimeout(resolve, 2500))
-      fs.writeFileSync("./mc/.software", build.software + "-" + build.name + "\n" + name)
+      fs.writeFileSync("./mc/.software", build.name + "\n" + name)
       if (!fs.existsSync("./mc/.world")) fs.writeFileSync("./mc/.world", "default");
       if (!fs.existsSync("./mc/worlds/")) fs.mkdirSync("./mc/worlds/");
 
