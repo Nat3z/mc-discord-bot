@@ -5,7 +5,21 @@ import { ActivityType, CacheType, Client, EmbedBuilder, GatewayIntentBits, Inter
 import request from 'request';
 
 const host = 'localhost';
-const port = 25565;
+
+type Options = {
+  port: number,
+  role_allowed: string
+}
+
+let Settings: Options = {
+  port: 25565,
+  role_allowed: ""
+};
+if (fs.existsSync("./settings.json")) {
+  Settings = JSON.parse(fs.readFileSync("./settings.json", "utf8"));
+}
+
+let PORT = Settings.port;
 const TOKEN = process.env.DISCORD_TOKEN;
 const GENERAL_CHANNEL_ID = process.env.GENERAL_CHANNEL_ID;
 const ADMIN = process.env.ADMIN_ID;
@@ -143,6 +157,9 @@ const configCommand = new SlashCommandBuilder()
     .addSubcommand(subcommand => subcommand.setName("set-properties")
       .setDescription("Set the defauult server.properties file.")
       .addAttachmentOption(option => option.setName('file').setDescription('The server.properties file to upload.').setRequired(true))
+    )
+    .addSubcommand(subcommand => subcommand.setName('set-port').setDescription('Set the port of the server.')
+      .addIntegerOption(option => option.setName('port').setDescription('The port to set.').setRequired(true))
     )
   )
 
@@ -554,6 +571,17 @@ client.on('interactionCreate', async interaction => {
           await interaction.editReply("Updated default server.properties.")
         })
       }
+      else if (subcommand === "set-port") {
+        const port = interaction.options.getInteger('port');
+        if (!port) {
+          await interaction.reply("No port provided.")
+          return;
+        }
+        PORT = port;
+        Settings.port = port;
+        fs.writeFileSync("./settings.json", JSON.stringify(Settings))
+        await interaction.editReply("Port set to " + port)
+      }
     }
 
   }
@@ -601,7 +629,7 @@ function bootupServer(starter: string) {
     interval = setInterval(() => {
       mc.ping({
         host,
-        port,
+        port: PORT,
         version: "1.20.1"
       }, (err, res) => {
         res = res as mc.NewPingResult;
@@ -622,7 +650,7 @@ function bootupServer(starter: string) {
   const interval_isOnline = setInterval(() => {
     mc.ping({
       host: host,
-      port: port,
+      port: PORT,
       version: "1.20.1",
     }, (err, res) => {
       res = res as mc.NewPingResult;
@@ -634,7 +662,7 @@ function bootupServer(starter: string) {
       online = true;
       clearInterval(interval_isOnline);
       checkIfPlayersAreOnline();
-      console.log("Server detected online! " + host + ":" + port)
+      console.log("Server detected online! " + host + ":" + PORT)
 
       const embed = new EmbedBuilder()
         .setTitle("Server online!")
