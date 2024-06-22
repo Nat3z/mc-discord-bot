@@ -30,6 +30,7 @@ if (!TOKEN || !GENERAL_CHANNEL_ID || !ADMIN || !GUILD || !MINUTES_BEFORE_SHUTDOW
 }
 
 import { REST, Routes } from 'discord.js';
+import { serve } from 'bun';
 
 // fetch all server softwares from bukkit.org 
 const supportedVersion = await fetch("https://api.papermc.io/v2/projects/paper", {
@@ -490,7 +491,7 @@ client.on('interactionCreate', async interaction => {
         resolve();
       }))
       await new Promise<void>((resolve, _) => setTimeout(resolve, 2500))
-      fs.writeFileSync("./mc/.software", build.name + "\n" + name)
+      fs.writeFileSync("./mc/.software", build.software + "-" + build.name + "\n" + name)
       if (!fs.existsSync("./mc/.world")) fs.writeFileSync("./mc/.world", "default");
       if (!fs.existsSync("./mc/worlds/")) fs.mkdirSync("./mc/worlds/");
 
@@ -525,18 +526,24 @@ client.on('interactionCreate', async interaction => {
       let servers = await fs.promises.readdir("./")
       servers = servers.filter((server) => server.includes("-server"))
       if (fs.existsSync("./mc/")) {
-        servers.push("mc")
+        servers = ["mc", ...servers]
       }
 
       const mappedSoftwares = new Map<string, string>();
       servers.forEach((server) => {
-        const data = fs.existsSync("./" + server + "/.software") ? fs.readFileSync("./" + server + "/.software", "utf8").split("\n").length > 1 ? fs.readFileSync("./" + server + "/.software", "utf8").split("\n")[0] : "default" : "default";
-        mappedSoftwares.set(server, data);
+        const data = fs.existsSync("./" + server + "/.software") ? fs.readFileSync("./" + server + "/.software", "utf8").split("\n").length > 1 ? fs.readFileSync("./" + server + "/.software", "utf8").split("\n") : ["default", "default"] : ["default", "default"];
+        mappedSoftwares.set(data[1], data[0]);
       })
+      let serversArray = Array.from(mappedSoftwares).map(([server, software]) => "**" + server + "** - " + software)
+
+      if (serversArray.length > 0) {
+        serversArray[0] = serversArray[0] + " **(Selected)**"
+      }
+      serversArray = serversArray.length === 0 ? ["No servers found."] : serversArray;
       const embed = new EmbedBuilder()
         .setTitle("Servers")
         .setColor("Aqua")
-        .setDescription(Array.from(mappedSoftwares).map(([server, software]) => server + " - " + software).join("\n"))
+        .setDescription(serversArray.join("\n"))
       await interaction.reply({ embeds: [embed] })
 
     }
