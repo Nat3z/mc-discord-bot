@@ -584,7 +584,7 @@ client.on('interactionCreate', async interaction => {
         PORT = port;
         Settings.port = port;
         fs.writeFileSync("./settings.json", JSON.stringify(Settings))
-        await interaction.editReply("Port set to " + port)
+        await interaction.reply("Port set to " + port)
       }
     }
 
