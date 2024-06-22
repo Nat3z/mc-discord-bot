@@ -133,7 +133,8 @@ const serverCommand = new SlashCommandBuilder()
   .addSubcommand(subcommand => subcommand.setName('select').setDescription('Select the name of the server software.').addStringOption(option => option.setName("software").setDescription("The server software name.").setRequired(true)))
   .addSubcommand(subcommand => subcommand.setName('list').setDescription('List all server software.'))
   .addSubcommand(subcommand => subcommand.setName('remove').setDescription('Remove the server software.'))
-  .addSubcommand(subcommand => subcommand.setName('setup').setDescription('Select the server software.').addStringOption(option => option.setName('software').setDescription('The server software to select.').addChoices(buildsToSelect).setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('setup').setDescription('Creates a new server software.').addStringOption(option => option.setName('software').setDescription('The server software to select.').addChoices(buildsToSelect).setRequired(true)))
+
 const commands = [
   {
     name: 'ping',
@@ -426,23 +427,28 @@ client.on('interactionCreate', async interaction => {
     }
 
     let subcommand = interaction.options.getSubcommand();
-    if (subcommand === "select") {
+    if (subcommand === "setup") {
       let software = interaction.options.getString('software');
+      let name = interaction.options.getString('name');
       if (!software) {
         await interaction.reply("No software provided.")
         return;
       }
+
+      if (fs.existsSync("./" + name + "-server")) {
+        await interaction.reply("Server with that name already exists.")
+        return;
+      }
+
       if (fs.existsSync("./mc/")) {
         // deselect by changing name by reading .software file
-        const data = fs.existsSync("./mc/.software") ? fs.readFileSync("./mc/.software", "utf8") : "default";
-        let iteration = 0;
-        while (fs.existsSync(`./${data}-${iteration}-server`)) {
-          iteration++;
+        if (!fs.existsSync("./mc/.software")) {
+          fs.writeFileSync("./mc/.software", "default\ndefault")
         }
-        fs.renameSync("./mc/", data + "-" + iteration + "-server");
+        const data = fs.existsSync("./mc/.software") ? fs.readFileSync("./mc/.software", "utf8").split("\n").length > 1 ? fs.readFileSync("./mc/.software", "utf8").split("\n")[1] : "default" : "default";
+        fs.renameSync("./mc/", data + "-server");
       }
       if (!fs.existsSync("./mc/")) fs.mkdirSync("./mc/");
-
 
       const build = builds.get(software);
       if (!build) {
@@ -455,12 +461,53 @@ client.on('interactionCreate', async interaction => {
         await interaction.editReply("Server software downloaded. Running server setup... By using this software, you agree to the Mojang EULA.")
         resolve();
       }))
-      fs.writeFileSync("./mc/.software", build.name)
+      fs.writeFileSync("./mc/.software", build.name + "\n" + name)
       if (!fs.existsSync("./mc/.world")) fs.writeFileSync("./mc/.world", "default");
       if (!fs.existsSync("./mc/worlds/")) fs.mkdirSync("./mc/worlds/");
 
       fs.writeFileSync("./mc/eula.txt", "eula=true")
       interaction.editReply("Server software selected!!")
+    }
+
+    else if (subcommand === "select") {
+      let software = interaction.options.getString('software');
+      // check if folder exists
+      if (!fs.existsSync("./" + software + "-server")) {
+        interaction.reply("Server software does not exist.")
+        return;
+      }
+
+      if (fs.existsSync("./mc/")) {
+        // deselect by changing name by reading .software file
+        //
+        if (!fs.existsSync("./mc/.software")) {
+          fs.writeFileSync("./mc/.software", "default\ndefaulut");
+        }
+        const data = fs.existsSync("./mc/.software") ? fs.readFileSync("./mc/.software", "utf8").split("\n").length > 1 ? fs.readFileSync("./mc/.software", "utf8").split("\n")[1] : "default" : "default";
+        fs.renameSync("./mc/", data + "-server");
+      }
+      fs.renameSync("./" + software + "-server", "./mc/");
+      await interaction.reply("Server software selected.")
+    }
+    else if (subcommand === "list") {
+      let servers = await fs.promises.readdir("./")
+      servers = servers.filter((server) => server.includes("-server"))
+      servers.push("mc")
+
+      const mappedSoftwares = new Map<string, string>();
+      servers.forEach((server) => {
+        const data = fs.existsSync("./" + server + "/.software") ? fs.readFileSync("./" + server + "/.software", "utf8").split("\n").length > 1 ? fs.readFileSync("./" + server + "/.software", "utf8").split("\n")[0] : "default" : "default";
+        mappedSoftwares.set(server, data);
+      })
+      const embed = new EmbedBuilder()
+        .setTitle("Servers")
+        .setColor("Aqua")
+        .setDescription(Array.from(mappedSoftwares).map(([server, software]) => server + " - " + software).join("\n"))
+      await interaction.reply({ embeds: [embed] })
+
+    }
+    else if (subcommand === "remove") {
+
     }
   }
   else if (interaction.commandName === 'ping') {
