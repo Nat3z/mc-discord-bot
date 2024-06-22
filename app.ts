@@ -43,9 +43,11 @@ type Build = {
 }
 
 let builds = new Map<string, Build>();
-if (!fs.existsSync("./builds.json")) {
+const filteredVersions = ["1.19.4", "1.8.9", "1.12.2", "1.20.6", "1.20.1", "1.21"]
+async function updateBuilds() {
   for (const version of supportedVersion.versions) {
-    console.log("Fetching Paper Builds...")
+    if (!filteredVersions.includes(version)) continue;
+    console.log("Fetching Paper Build " + version)
     const data = await fetch(`https://api.papermc.io/v2/projects/paper/versions/${version}/builds`, {
       "headers": {
         "accept": "*/*",
@@ -72,8 +74,27 @@ if (!fs.existsSync("./builds.json")) {
     })
 
   }
-
-  fs.writeFileSync("./builds.json", JSON.stringify(builds))
+  for (const version of filteredVersions) {
+    if (version === "1.8.9" || version === "1.12.2") continue;
+    builds.set(`fabric-${version}`, {
+      name: version,
+      software: "fabric",
+      url: `https://meta.fabricmc.net/v2/versions/loader/${version}/0.15.11/1.0.1/server/jar`
+    })
+  }
+  fs.writeFileSync("./builds.json", JSON.stringify(({ "time": Date.now(), ...Object.fromEntries(builds) })))
+}
+if (!fs.existsSync("./builds.json")) {
+  await updateBuilds();
+}
+else {
+  const buildJSONObj = JSON.parse(fs.readFileSync("./builds.json", "utf8"))
+  // if (Date.now() - buildJSONObj.time > 1000 * 60 * 60 * 24) {
+  await updateBuilds();
+  // } else {
+  //   delete buildJSONObj.time;
+  //   builds = new Map<string, Build>(Object.entries(buildJSONObj))
+  // }
 }
 
 const buildsToSelect = Array.from(builds.keys()).map((key) => {
@@ -82,6 +103,7 @@ const buildsToSelect = Array.from(builds.keys()).map((key) => {
     value: key
   };
 });
+
 
 // save builds to a file to prevent ddos
 const executeCommand = new SlashCommandBuilder()
@@ -108,9 +130,10 @@ const modCommand = new SlashCommandBuilder()
 const serverCommand = new SlashCommandBuilder()
   .setName('server')
   .setDescription('Select the server software.')
-  .addSubcommand(subcommand => subcommand.setName('select').setDescription('Select the server software.').addStringOption(option => option.setName('software').setDescription('The server software to select.').setRequired(true)
-    .addChoices()
-  ))
+  .addSubcommand(subcommand => subcommand.setName('select').setDescription('Select the name of the server software.').addStringOption(option => option.setName("software").setDescription("The server software name.").setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('list').setDescription('List all server software.'))
+  .addSubcommand(subcommand => subcommand.setName('remove').setDescription('Remove the server software.'))
+  .addSubcommand(subcommand => subcommand.setName('setup').setDescription('Select the server software.').addStringOption(option => option.setName('software').setDescription('The server software to select.').addChoices(buildsToSelect).setRequired(true)))
 const commands = [
   {
     name: 'ping',
@@ -126,7 +149,8 @@ const commands = [
   },
   executeCommand.toJSON(),
   modCommand.toJSON(),
-  worldCommand.toJSON()
+  worldCommand.toJSON(),
+  serverCommand.toJSON()
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -393,6 +417,51 @@ client.on('interactionCreate', async interaction => {
 
     }
 
+  }
+
+  else if (interaction.commandName === 'server') {
+    if (interaction.user.id !== ADMIN) {
+      await interaction.reply("You cannot do this action.")
+      return;
+    }
+
+    let subcommand = interaction.options.getSubcommand();
+    if (subcommand === "select") {
+      let software = interaction.options.getString('software');
+      if (!software) {
+        await interaction.reply("No software provided.")
+        return;
+      }
+      if (fs.existsSync("./mc/")) {
+        // deselect by changing name by reading .software file
+        const data = fs.existsSync("./mc/.software") ? fs.readFileSync("./mc/.software", "utf8") : "default";
+        let iteration = 0;
+        while (fs.existsSync(`./${data}-${iteration}-server`)) {
+          iteration++;
+        }
+        fs.renameSync("./mc/", data + "-" + iteration + "-server");
+      }
+      if (!fs.existsSync("./mc/")) fs.mkdirSync("./mc/");
+
+
+      const build = builds.get(software);
+      if (!build) {
+        await interaction.reply("Invalid software.")
+        return;
+      }
+
+      await interaction.reply("Downloading server software... Please wait.")
+      await new Promise<void>((resolve, _) => request.get(build.url).pipe(fs.createWriteStream("./mc/server.jar")).on('close', async () => {
+        await interaction.editReply("Server software downloaded. Running server setup... By using this software, you agree to the Mojang EULA.")
+        resolve();
+      }))
+      fs.writeFileSync("./mc/.software", build.name)
+      if (!fs.existsSync("./mc/.world")) fs.writeFileSync("./mc/.world", "default");
+      if (!fs.existsSync("./mc/worlds/")) fs.mkdirSync("./mc/worlds/");
+
+      fs.writeFileSync("./mc/eula.txt", "eula=true")
+      interaction.editReply("Server software selected!!")
+    }
   }
   else if (interaction.commandName === 'ping') {
     await interaction.reply("Pong!")
