@@ -1,7 +1,7 @@
 import mc from 'minecraft-protocol'
 import { spawn } from 'child_process';
 import fs from 'fs';
-import { ActivityType, CacheType, Client, EmbedBuilder, GatewayIntentBits, Interaction, SlashCommandBuilder, TextChannel } from 'discord.js';
+import { ActivityType, CacheType, Client, EmbedBuilder, GatewayIntentBits, Interaction, SlashCommandBuilder, TextChannel, PermissionFlagsBits } from 'discord.js';
 import request from 'request';
 
 const host = 'localhost';
@@ -89,12 +89,12 @@ if (!fs.existsSync("./builds.json")) {
 }
 else {
   const buildJSONObj = JSON.parse(fs.readFileSync("./builds.json", "utf8"))
-  // if (Date.now() - buildJSONObj.time > 1000 * 60 * 60 * 24) {
-  await updateBuilds();
-  // } else {
-  //   delete buildJSONObj.time;
-  //   builds = new Map<string, Build>(Object.entries(buildJSONObj))
-  // }
+  if (Date.now() - buildJSONObj.time > 1000 * 60 * 60 * 24) {
+    await updateBuilds();
+  } else {
+    delete buildJSONObj.time;
+    builds = new Map<string, Build>(Object.entries(buildJSONObj))
+  }
 }
 
 const buildsToSelect = Array.from(builds.keys()).map((key) => {
@@ -132,8 +132,19 @@ const serverCommand = new SlashCommandBuilder()
   .setDescription('Select the server software.')
   .addSubcommand(subcommand => subcommand.setName('select').setDescription('Select the name of the server software.').addStringOption(option => option.setName("software").setDescription("The server software name.").setRequired(true)))
   .addSubcommand(subcommand => subcommand.setName('list').setDescription('List all server software.'))
-  .addSubcommand(subcommand => subcommand.setName('remove').setDescription('Remove the server software.'))
-  .addSubcommand(subcommand => subcommand.setName('setup').setDescription('Creates a new server software.').addStringOption(option => option.setName('software').setDescription('The server software to select.').addChoices(buildsToSelect).setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('remove').setDescription('Remove the server software.').addStringOption(option => option.setName("software").setDescription("The server software name.").setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('setup').setDescription('Creates a new server software.').addStringOption(option => option.setName("name").setDescription("The name of your server.").setRequired(true)).addStringOption(option => option.setName('software').setDescription('The server software to select.').addChoices(buildsToSelect).setRequired(true)))
+
+const configCommand = new SlashCommandBuilder()
+  .setName('config')
+  .setDescription('Configure the bot and default server settings.')
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .addSubcommandGroup(subcommandGroup => subcommandGroup.setName('set-server').setDescription('Select the name of the server software.')
+    .addSubcommand(subcommand => subcommand.setName("set-properties")
+      .setDescription("Set the defauult server.properties file.")
+      .addAttachmentOption(option => option.setName('file').setDescription('The server.properties file to upload.').setRequired(true))
+    )
+  )
 
 const commands = [
   {
@@ -151,7 +162,8 @@ const commands = [
   executeCommand.toJSON(),
   modCommand.toJSON(),
   worldCommand.toJSON(),
-  serverCommand.toJSON()
+  serverCommand.toJSON(),
+  configCommand.toJSON()
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -417,7 +429,6 @@ client.on('interactionCreate', async interaction => {
       }
 
     }
-
   }
 
   else if (interaction.commandName === 'server') {
@@ -461,11 +472,15 @@ client.on('interactionCreate', async interaction => {
         await interaction.editReply("Server software downloaded. Running server setup... By using this software, you agree to the Mojang EULA.")
         resolve();
       }))
+      await new Promise<void>((resolve, _) => setTimeout(resolve, 2500))
       fs.writeFileSync("./mc/.software", build.name + "\n" + name)
       if (!fs.existsSync("./mc/.world")) fs.writeFileSync("./mc/.world", "default");
       if (!fs.existsSync("./mc/worlds/")) fs.mkdirSync("./mc/worlds/");
 
       fs.writeFileSync("./mc/eula.txt", "eula=true")
+      if (fs.existsSync("./default-server.properties")) {
+        fs.copyFileSync("./default-server.properties", "./mc/server.properties")
+      }
       interaction.editReply("Server software selected!!")
     }
 
@@ -492,7 +507,9 @@ client.on('interactionCreate', async interaction => {
     else if (subcommand === "list") {
       let servers = await fs.promises.readdir("./")
       servers = servers.filter((server) => server.includes("-server"))
-      servers.push("mc")
+      if (fs.existsSync("./mc/")) {
+        servers.push("mc")
+      }
 
       const mappedSoftwares = new Map<string, string>();
       servers.forEach((server) => {
@@ -507,8 +524,38 @@ client.on('interactionCreate', async interaction => {
 
     }
     else if (subcommand === "remove") {
+      let software = interaction.options.getString('software');
+      if (!software) {
+        await interaction.reply("No software provided.")
+        return;
+      }
 
+      if (!fs.existsSync("./" + software + "-server")) {
+        await interaction.reply("Server software does not exist or is currently selected. Please switch softwares before removing.")
+        return;
+      }
+      fs.rmdirSync("./" + software + "-server", { recursive: true });
+      await interaction.reply("Server software Removed");
     }
+  }
+  else if (interaction.commandName === "config") {
+    const subcommandGroup = interaction.options.getSubcommandGroup();
+    if (subcommandGroup === "set-server") {
+      const subcommand = interaction.options.getSubcommand();
+      if (subcommand === "set-properties") {
+        const file = interaction.options.getAttachment('file');
+        if (!file) {
+          await interaction.reply("No file provided.")
+          return;
+        }
+
+        await interaction.reply("Setting server.properties...")
+        request.get(file.url).pipe(fs.createWriteStream("./default-server.properties")).on('close', async () => {
+          await interaction.editReply("Updated default server.properties.")
+        })
+      }
+    }
+
   }
   else if (interaction.commandName === 'ping') {
     await interaction.reply("Pong!")
