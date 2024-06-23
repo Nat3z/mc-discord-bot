@@ -1,7 +1,7 @@
 import mc from 'minecraft-protocol'
 import { spawn } from 'child_process';
 import fs from 'fs';
-import { ActivityType, CacheType, Client, EmbedBuilder, GatewayIntentBits, Interaction, SlashCommandBuilder, TextChannel, PermissionFlagsBits, ColorResolvable, Message } from 'discord.js';
+import { ActivityType, CacheType, Client, EmbedBuilder, GatewayIntentBits, Interaction, SlashCommandBuilder, TextChannel, PermissionFlagsBits, ColorResolvable, Message, User } from 'discord.js';
 import { REST, Routes } from 'discord.js';
 import request from 'request';
 
@@ -9,7 +9,8 @@ const host = 'localhost';
 
 type Options = {
   port: number,
-  role_allowed: string
+  role_allowed: string,
+  members_can_stop: boolean
 }
 const EmojiEnum = {
   "loading": "<:loading:1254229449860317204>",
@@ -18,7 +19,8 @@ const EmojiEnum = {
 }
 let Settings: Options = {
   port: 25565,
-  role_allowed: ""
+  role_allowed: "",
+  members_can_stop: true
 };
 if (fs.existsSync("./settings.json")) {
   Settings = JSON.parse(fs.readFileSync("./settings.json", "utf8"));
@@ -177,6 +179,15 @@ const configCommand = new SlashCommandBuilder()
       .addIntegerOption(option => option.setName('port').setDescription('The port to set.').setRequired(true))
     )
   )
+  .addSubcommandGroup(subcommandGroup => subcommandGroup.setName('set-guild').setDescription('Set the guild settings.')
+    .addSubcommand(subcommand => subcommand.setName('set-role').setDescription('Set the role required to use the bot.')
+      .addRoleOption(option => option.setName('role').setDescription('The role to set.').setRequired(true))
+
+    )
+    .addSubcommand(subcommand => subcommand.setName('members-can-stop').setDescription('Allows members to step the server.')
+      .addBooleanOption(option => option.setName('allow').setDescription('Allow members to stop the server.').setRequired(true))
+    )
+  )
 
 const startCommand = new SlashCommandBuilder()
   .setName('start')
@@ -220,7 +231,8 @@ client.on('ready', async () => {
   }
 
   generalChannel = await client.channels.fetch(GENERAL_CHANNEL_ID) as TextChannel;
-  client.user!!.setActivity("Minecraft Server", { type: ActivityType.Watching })
+  client.user!!.setActivity("Commands", { type: ActivityType.Listening })
+  client.user!!.setPresence({ status: "idle" })
 });
 
 function checkIfServerSelected(interaction: Interaction<CacheType>): Boolean {
@@ -231,13 +243,23 @@ function checkIfServerSelected(interaction: Interaction<CacheType>): Boolean {
   }
   return true;
 }
+async function checkPermissions(adminTask: boolean, user: User) {
+  if (user.id === ADMIN) return true;
+  if (!Settings.role_allowed) return true;
+  // get roles of the user
+  const member = await client.guilds.cache.get(GUILD!!)!!.members.fetch(user!!.id);
+  return (!adminTask && member.roles.cache.find(role => role.id === Settings.role_allowed) !== undefined);
+}
+
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
-
+  if (!await checkPermissions(false, interaction.user)) {
+    await interaction.reply({ embeds: [buildPresetEmbed("error", "You do not have the proper role to do this action.", "")], ephemeral: true })
+    return
+  }
   if (interaction.commandName === 'start') {
-
     if (!checkIfServerSelected(interaction)) return;
-    if (online) {
+    if (online || bootingUp) {
       await interaction.reply({ embeds: [buildPresetEmbed("error", "Server already online.", "")], ephemeral: true })
       return
     }
@@ -248,8 +270,11 @@ client.on('interactionCreate', async interaction => {
     console.log("Server starting...")
   }
   else if (interaction.commandName === 'stop') {
+    if (!Settings.members_can_stop && !await checkPermissions(true, interaction.user)) {
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "You do not have the proper role to do this action.", "")], ephemeral: true })
+    }
     if (!checkIfServerSelected(interaction)) return;
-    if (!online) {
+    if (!online || bootingUp) {
       await interaction.reply({ embeds: [buildPresetEmbed("error", "Server already offline.", "")], ephemeral: true })
       return
     }
@@ -258,7 +283,7 @@ client.on('interactionCreate', async interaction => {
     remoteStop(interaction.user.username);
   }
   else if (interaction.commandName === 'execute') {
-    if (interaction.user.id !== ADMIN) {
+    if (await checkPermissions(true, interaction.user)) {
       await interaction.reply({ embeds: [buildPresetEmbed("error", "You cannot do this action.", "")] })
       return;
     }
@@ -277,7 +302,7 @@ client.on('interactionCreate', async interaction => {
   }
   else if (interaction.commandName === 'mod') {
     if (!checkIfServerSelected(interaction)) return;
-    if (interaction.user.id !== ADMIN) {
+    if (await checkPermissions(true, interaction.user)) {
       await interaction.reply({ embeds: [buildPresetEmbed("error", "You cannot do this action.", "")] })
       return;
     }
@@ -339,7 +364,7 @@ client.on('interactionCreate', async interaction => {
   }
   else if (interaction.commandName === 'world') {
     if (!checkIfServerSelected(interaction)) return;
-    if (interaction.user.id !== ADMIN) {
+    if (await checkPermissions(true, interaction.user)) {
       await interaction.reply({ embeds: [buildPresetEmbed("error", "You cannot do this action.", "")] })
       return;
     }
@@ -475,11 +500,14 @@ client.on('interactionCreate', async interaction => {
   }
 
   else if (interaction.commandName === 'server') {
-    if (interaction.user.id !== ADMIN) {
+    if (await checkPermissions(true, interaction.user)) {
       await interaction.reply({ embeds: [buildPresetEmbed("error", "You cannot do this action.", "")] })
       return;
     }
-
+    if (online || bootingUp) {
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "Server is currently online.", "")] })
+      return;
+    }
     let subcommand = interaction.options.getSubcommand();
     if (subcommand === "setup") {
       let software = interaction.options.getString('software');
@@ -621,6 +649,31 @@ client.on('interactionCreate', async interaction => {
       }
     }
 
+    else if (subcommandGroup === "set-guild") {
+      const subcommand = interaction.options.getSubcommand();
+      if (subcommand === "set-role") {
+        const role = interaction.options.getRole('role');
+        if (!role) {
+          await interaction.reply("No role provided.")
+          return;
+        }
+        Settings.role_allowed = role.id;
+        fs.writeFileSync("./settings.json", JSON.stringify(Settings))
+        await interaction.reply("Role set to " + role);
+      }
+      else if (subcommand === "members-can-stop") {
+        const allow = interaction.options.getBoolean('allow');
+        if (allow === null) {
+          await interaction.reply("No value provided.")
+          return;
+        }
+        Settings.members_can_stop = allow;
+        fs.writeFileSync("./settings.json", JSON.stringify(Settings))
+        await interaction.reply("Members can stop set to " + allow);
+      }
+
+    }
+
   }
   else if (interaction.commandName === 'ping') {
     await interaction.reply("Pong!")
@@ -640,7 +693,9 @@ let remoteStop = (starter: string) => { };
 let runCommand = (command: string) => { };
 
 let online = false;
+let bootingUp = false;
 async function bootupServer(starter: string, settings: { verbose: boolean, message: Message }) {
+  bootingUp = true;
   // execute the ./start.sh script and have access to std in
   const child = spawn('sh', ['./start.sh'], {
   })
@@ -675,9 +730,12 @@ async function bootupServer(starter: string, settings: { verbose: boolean, messa
   child.on('exit', (code) => {
     clearInterval(interval);
     clearInterval(interval_isOnline);
+    bootingUp = false;
     console.log("Server exited.")
     online = false;
     settings.message.edit({ embeds: [buildPresetEmbed("error", "Server has exited.", "")] })
+    client.user!!.setActivity("Commands", { type: ActivityType.Listening })
+    client.user!!.setPresence({ status: "idle" })
     if (settings.verbose) {
       settings.message.thread!!.setArchived(true, "Server has exited.")
     }
@@ -739,6 +797,9 @@ async function bootupServer(starter: string, settings: { verbose: boolean, messa
         .setDescription("Server is now online by <@" + starter + ">")
 
       settings.message.edit({ embeds: [embed] })
+      client.user!!.setActivity("Minecraft Server", { type: ActivityType.Watching })
+      client.user!!.setPresence({ status: "online" })
+      bootingUp = false;
     })
   }, 5000)
 
