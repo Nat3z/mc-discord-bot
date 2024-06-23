@@ -59,7 +59,9 @@ type Build = {
 }
 
 function buildPresetEmbed(type: "loading" | "success" | "error", title: string, description: string) {
+  if (description === "") description = " ";
   let color: ColorResolvable = type === "loading" ? "Yellow" : type === "success" ? "Green" : "Red";
+
   return new EmbedBuilder()
     .setAuthor({ name: title, iconURL: type === "loading" ? "https://cdn.discordapp.com/emojis/1254229449860317204.gif" : type === "success" ? "https://cdn.discordapp.com/emojis/879578929097240606.png" : "https://cdn.discordapp.com/emojis/879578948370055168.png" })
     .setColor(color)
@@ -232,22 +234,23 @@ client.on('interactionCreate', async interaction => {
 
     if (!checkIfServerSelected(interaction)) return;
     if (online) {
-      await interaction.reply({ embeds: [buildPresetEmbed("error", "Server already online.", "")] })
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "Server already online.", "")], ephemeral: true })
       return
     }
     let verbose = interaction.options.getBoolean('verbose')
     if (verbose === null) verbose = false;
-    const message = await (await interaction.reply({ embeds: [buildPresetEmbed("loading", "Starting Server...", "")] })).awaitMessageComponent()
-    bootupServer(interaction.user.id, { verbose, verboseMessage: message.message });
+    const message = await interaction.reply({ embeds: [buildPresetEmbed("loading", "Starting Server...", "")], fetchReply: true })
+    bootupServer(interaction.user.id, { verbose, message: message });
+    console.log("Server starting...")
   }
   else if (interaction.commandName === 'stop') {
     if (!checkIfServerSelected(interaction)) return;
     if (!online) {
-      await interaction.reply({ embeds: [buildPresetEmbed("error", "Server already offline.", "")] })
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "Server already offline.", "")], ephemeral: true })
       return
     }
 
-    await interaction.reply({ embeds: [buildPresetEmbed("loading", "Starting Server...", "")] })
+    await interaction.reply({ embeds: [buildPresetEmbed("loading", "Stopping Server...", "")], ephemeral: true })
     remoteStop(interaction.user.username);
   }
   else if (interaction.commandName === 'execute') {
@@ -626,25 +629,51 @@ let remoteStop = (starter: string) => { };
 let runCommand = (command: string) => { };
 
 let online = false;
-function bootupServer(starter: string, settings: { verbose: boolean, verboseMessage?: Message }) {
+async function bootupServer(starter: string, settings: { verbose: boolean, message: Message }) {
   // execute the ./start.sh script and have access to std in
   const child = spawn('sh', ['./start.sh'], {
-    stdio: ['pipe', process.stdout, process.stderr]
   })
+
   process.stdin.pipe(child.stdin);
   if (settings.verbose) {
+    await settings.message!!.startThread({ name: "Server Output", reason: "Created to show verbose output of server." })
   }
+  child.stdout.on('data', (data: string) => {
+    console.log("" + data)
+    if (!settings.verbose) return;
+    if (!data || data.length < 1) return;
+    const embed = new EmbedBuilder()
+      .setTitle(" ")
+      .setDescription('' + data)
+      .setColor("Grey")
+
+    settings.message.thread!!.send({ embeds: [embed] });
+  })
+  child.stderr.on('data', (data) => {
+    console.log("" + data)
+    if (!settings.verbose) return;
+    if (!data || data.length < 1) return;
+    const embed = new EmbedBuilder()
+      .setTitle(" ")
+      .setDescription('' + data)
+      .setColor("Red")
+
+    settings.message.thread!!.send({ embeds: [embed] });
+  })
   let interval;
   child.on('exit', (code) => {
     clearInterval(interval);
+    clearInterval(interval_isOnline);
     console.log("Server exited.")
     online = false;
-    sendShutdownMessage("Server exited.")
+    settings.message.edit({ embeds: [buildPresetEmbed("error", "Server has exited.", "")] })
+    if (settings.verbose) {
+      settings.message.thread!!.setArchived(true, "Server has exited.")
+    }
   })
 
   remoteStop = (starter: string) => {
     child.stdin.write('/stop\r');
-    clearInterval(interval);
   }
 
   runCommand = (command) => {
@@ -698,7 +727,7 @@ function bootupServer(starter: string, settings: { verbose: boolean, verboseMess
         .setColor("Green")
         .setDescription("Server is now online by <@" + starter + ">")
 
-      generalChannel!!.send({ embeds: [embed] })
+      settings.message.edit({ embeds: [embed] })
     })
   }, 5000)
 
