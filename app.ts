@@ -1,7 +1,7 @@
 import mc from 'minecraft-protocol'
 import { spawn } from 'child_process';
 import fs from 'fs';
-import { ActivityType, CacheType, Client, EmbedBuilder, GatewayIntentBits, Interaction, SlashCommandBuilder, TextChannel, PermissionFlagsBits } from 'discord.js';
+import { ActivityType, CacheType, Client, EmbedBuilder, GatewayIntentBits, Interaction, SlashCommandBuilder, TextChannel, PermissionFlagsBits, ColorResolvable, Message } from 'discord.js';
 import { REST, Routes } from 'discord.js';
 import request from 'request';
 
@@ -11,7 +11,11 @@ type Options = {
   port: number,
   role_allowed: string
 }
-
+const EmojiEnum = {
+  "loading": "<:loading:1254229449860317204>",
+  "success": "<:checkmark:879578929097240606>",
+  "error": "<:error:879578948370055168>"
+}
 let Settings: Options = {
   port: 25565,
   role_allowed: ""
@@ -54,6 +58,13 @@ type Build = {
   url: string
 }
 
+function buildPresetEmbed(type: "loading" | "success" | "error", title: string, description: string) {
+  let color: ColorResolvable = type === "loading" ? "Yellow" : type === "success" ? "Green" : "Red";
+  return new EmbedBuilder()
+    .setAuthor({ name: title, iconURL: type === "loading" ? "https://cdn.discordapp.com/emojis/1254229449860317204.gif" : type === "success" ? "https://cdn.discordapp.com/emojis/879578929097240606.png" : "https://cdn.discordapp.com/emojis/879578948370055168.png" })
+    .setColor(color)
+    .setDescription(description)
+}
 let builds = new Map<string, Build>();
 const filteredVersions = ["1.19.4", "1.8.9", "1.12.2", "1.20.6", "1.20.1", "1.21"]
 async function updateBuilds() {
@@ -161,19 +172,21 @@ const configCommand = new SlashCommandBuilder()
     )
   )
 
+const startCommand = new SlashCommandBuilder()
+  .setName('start')
+  .setDescription('Starts the server.')
+  .addBooleanOption(option => option.setName('verbose').setDescription('Show the stdout of the server.').setRequired(false))
+
 const commands = [
   {
     name: 'ping',
     description: 'Replies with Pong!',
   },
   {
-    name: 'start',
-    description: 'Starts the server.'
-  },
-  {
     name: 'stop',
     description: 'Stops the server.'
   },
+  startCommand.toJSON(),
   executeCommand.toJSON(),
   modCommand.toJSON(),
   worldCommand.toJSON(),
@@ -207,12 +220,7 @@ client.on('ready', async () => {
 function checkIfServerSelected(interaction: Interaction<CacheType>): Boolean {
   if (!interaction.isChatInputCommand()) return false;
   if (!fs.existsSync("./mc/")) {
-    const embed = new EmbedBuilder()
-      .setTitle("Server not selected.")
-      .setColor("Red")
-      .setDescription("Please select a server software first by using /server select <sofware>")
-
-    interaction.reply({ embeds: [embed] })
+    interaction.reply({ embeds: [buildPresetEmbed("error", "Server not selected.", "Please select a server software first by using /server select <sofware>")] })
     return false;
   }
   return true;
@@ -224,73 +232,74 @@ client.on('interactionCreate', async interaction => {
 
     if (!checkIfServerSelected(interaction)) return;
     if (online) {
-      await interaction.reply("Server is already online.")
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "Server already online.", "")] })
       return
     }
-    const embed = new EmbedBuilder()
-      .setTitle("Starting Server...")
-      .setColor("Green")
-      .setDescription("Starting the server... Please wait.")
-
-    await interaction.reply({ embeds: [embed] })
-    bootupServer(interaction.user.id);
+    let verbose = interaction.options.getBoolean('verbose')
+    if (verbose === null) verbose = false;
+    const message = await (await interaction.reply({ embeds: [buildPresetEmbed("loading", "Starting Server...", "")] })).awaitMessageComponent()
+    bootupServer(interaction.user.id, { verbose, verboseMessage: message.message });
   }
   else if (interaction.commandName === 'stop') {
     if (!checkIfServerSelected(interaction)) return;
     if (!online) {
-      await interaction.reply("Server offline already.")
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "Server already offline.", "")] })
       return
     }
 
-    await interaction.reply("Stopping server...")
+    await interaction.reply({ embeds: [buildPresetEmbed("loading", "Starting Server...", "")] })
     remoteStop(interaction.user.username);
   }
   else if (interaction.commandName === 'execute') {
     if (interaction.user.id !== ADMIN) {
-      await interaction.reply("You cannot do this action.")
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "You cannot do this action.", "")] })
       return;
     }
     let command = interaction.options.getString('command');
     if (!command) {
-      await interaction.reply("No command provided.")
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "Command Execution Error", "No command provided.")] })
       return;
     }
     if (!online) {
-      await interaction.reply("Server is offline.")
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "Command Execution Error", "Server Offline.")] })
       return
     }
 
-    await interaction.reply("Executing command: `/" + command + "`")
+    await interaction.reply({ embeds: [buildPresetEmbed("success", "Command Execution", "Executing command: `" + command + "`")] })
     runCommand(command);
   }
   else if (interaction.commandName === 'mod') {
     if (!checkIfServerSelected(interaction)) return;
     if (interaction.user.id !== ADMIN) {
-      await interaction.reply("You cannot do this action.")
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "You cannot do this action.", "")] })
       return;
     }
 
     let subcommand = interaction.options.getSubcommand();
+    if (!fs.existsSync("./mc/mods/")) {
+      fs.mkdirSync("./mc/mods/")
+    }
     if (subcommand === 'add') {
       const file = interaction.options.getAttachment('file');
       if (!file) {
-        await interaction.reply("No file provided.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "Mod Upload Error", "No file provided.")] })
         return;
       }
 
-      await interaction.reply("Adding mod...")
+      await interaction.reply({ embeds: [buildPresetEmbed("loading", "Mod Upload", "Adding Mod")] })
       // download mod and save it to the ./mods/ folder in the "mc" directory
       // run wget to download it
       //
       request.get(file.url).pipe(fs.createWriteStream("./mc/mods/" + file.name)).on('close', async () => {
-        await interaction.editReply("Mod added!!!")
+
+        await interaction.editReply({ embeds: [buildPresetEmbed("success", "Mod Upload", "Mod `" + file.name + "` added.")] })
       })
     }
     else if (subcommand === 'list') {
       // read files inthe mods folder
       const mods = await fs.promises.readdir("./mc/mods/")
       if (mods.length === 0) {
-        await interaction.reply("No mods found.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "No mods in mod folder.", "")] })
         return
       }
       const embed = new EmbedBuilder()
@@ -303,17 +312,18 @@ client.on('interactionCreate', async interaction => {
     else if (subcommand === 'remove') {
       let mod = interaction.options.getString('mod');
       if (!mod) {
-        await interaction.reply("No mod provided.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "No mod provided.", "")] })
         return;
       }
-      await interaction.reply("Removing mod...")
+
+      await interaction.reply({ embeds: [buildPresetEmbed("loading", "Mod Removal", "Removing Mod...")] })
       // remove mod from the mods folder
       fs.unlink("./mc/mods/" + mod, async (err) => {
         if (err) {
-          await interaction.editReply("Failed to remove mod. Reason: " + err.message)
+          await interaction.editReply({ embeds: [buildPresetEmbed("error", "Mod Removal Error", "Failed to remove mod. Reason: " + err.message)] })
         }
         else {
-          await interaction.editReply("Mod removed.")
+          await interaction.editReply({ embeds: [buildPresetEmbed("success", "Mod Removal", "Successfully removed mod.")] })
         }
       })
     }
@@ -321,12 +331,12 @@ client.on('interactionCreate', async interaction => {
   else if (interaction.commandName === 'world') {
     if (!checkIfServerSelected(interaction)) return;
     if (interaction.user.id !== ADMIN) {
-      await interaction.reply("You cannot do this action.")
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "You cannot do this action.", "")] })
       return;
     }
 
     if (online) {
-      await interaction.reply("Server is online. Please stop the server before doing this action.")
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "World Switcher Error", "Server is online. Please stop the server before doing this action.")] })
       return;
     }
 
@@ -340,10 +350,11 @@ client.on('interactionCreate', async interaction => {
     if (subcommand === 'add') {
       let world = interaction.options.getAttachment('world');
       if (!world) {
-        await interaction.reply("No world provided.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "World Switcher Error", "No world provided.")] })
         return;
       }
-      await interaction.reply("Adding world...")
+
+      await interaction.reply({ embeds: [buildPresetEmbed("loading", "World Switcher", "Adding World...")] })
       fs.mkdir("./mc/worlds/" + world.name, { recursive: true }, (err) => { console.error(err) })
 
       request.get(world.url).pipe(fs.createWriteStream("./mc/worlds/" + world.name + "/world.zip")).on('close', async () => {
@@ -353,36 +364,38 @@ client.on('interactionCreate', async interaction => {
         child.on('exit', () => {
           fs.unlink("./mc/worlds/" + world!!.name + "/world.zip", (err) => { if (err) console.error(err) })
         })
-        await interaction.editReply("World added!!!")
+
+        await interaction.editReply({ embeds: [buildPresetEmbed("success", "World Switcher", "World Added.")] })
       })
     }
     else if (subcommand === 'remove') {
       let world = interaction.options.getString('world');
       if (!world) {
-        await interaction.reply("No world provided.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "World Remover Error", "No world provided.")] })
         return;
       }
-      await interaction.reply("Removing world...")
+
+      await interaction.reply({ embeds: [buildPresetEmbed("loading", "World Remover", "Removing world...")] })
 
 
       const data = fs.existsSync("./mc/.world") ? await fs.promises.readFile("./mc/.world", "utf8") : undefined;
       if (data === world) {
-        await interaction.editReply("Cannot remove the current world.")
+        await interaction.editReply({ embeds: [buildPresetEmbed("error", "World Remover Error", "Cannot remove the current world.")] })
         return;
       }
       fs.unlink("./mc/worlds/" + world, async (err) => {
         if (err) {
-          await interaction.editReply("Failed to remove world. Reason: " + err.message)
+          await interaction.editReply({ embeds: [buildPresetEmbed("error", "World Remover Error", "Failed to remove world: `" + err.message + "`")] })
         }
         else {
-          await interaction.editReply("World removed.")
+          await interaction.editReply({ embeds: [buildPresetEmbed("success", "World Remover", "Removed world.")] })
         }
       })
     }
     else if (subcommand === 'list') {
       const worlds = await fs.promises.readdir("./mc/worlds/")
       if (worlds.length === 0) {
-        await interaction.reply("No worlds found.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "World List Error", "No worlds found")] })
         return
       }
       const embed = new EmbedBuilder()
@@ -395,15 +408,16 @@ client.on('interactionCreate', async interaction => {
     else if (subcommand === 'set') {
       let world = interaction.options.getString('world');
       if (!world) {
-        await interaction.reply("No world provided.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "World Switcher Error", "No world provided.")] })
         return;
       }
 
       if (!fs.existsSync("./mc/worlds/" + world)) {
-        await interaction.reply("World doesn't exist.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "World Switcher Error", "World doesn't exist.")] })
         return;
       }
-      await interaction.reply("Setting world...")
+
+      await interaction.reply({ embeds: [buildPresetEmbed("loading", "World Switcher", "Setting world...")] })
       // save current world to the worlds folder
       // read the "world" file to get the current world
       const data = fs.existsSync("./mc/.world") ? await fs.promises.readFile("./mc/.world", "utf8") : undefined;
@@ -413,7 +427,7 @@ client.on('interactionCreate', async interaction => {
         child.on('exit', () => {
           const child = spawn('cp', ['-ruT', './mc/worlds/' + world!! + "/", './mc/world/'])
           child.on('exit', () => {
-            interaction.editReply("World Updated!")
+            interaction.editReply({ embeds: [buildPresetEmbed("success", "World Switcher", "World Updated!")] })
           })
         });
 
@@ -448,7 +462,7 @@ client.on('interactionCreate', async interaction => {
 
   else if (interaction.commandName === 'server') {
     if (interaction.user.id !== ADMIN) {
-      await interaction.reply("You cannot do this action.")
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "You cannot do this action.", "")] })
       return;
     }
 
@@ -457,12 +471,12 @@ client.on('interactionCreate', async interaction => {
       let software = interaction.options.getString('software');
       let name = interaction.options.getString('name');
       if (!software) {
-        await interaction.reply("No software provided.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "Server Setup Error", "No software provided.")] })
         return;
       }
 
       if (fs.existsSync("./" + name + "-server")) {
-        await interaction.reply("Server with that name already exists.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "Server Setup Error", "Server with that name already exists.")] })
         return;
       }
 
@@ -478,13 +492,14 @@ client.on('interactionCreate', async interaction => {
 
       const build = builds.get(software);
       if (!build) {
-        await interaction.reply("Invalid software.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "Server Setup Error", "Invalid Software.")] })
         return;
       }
 
-      await interaction.reply("Downloading server software... Please wait.")
+
+      await interaction.reply({ embeds: [buildPresetEmbed("loading", "Server Setup", "Downloading server software...")] })
       await new Promise<void>((resolve, _) => request.get(build.url).pipe(fs.createWriteStream("./mc/server.jar")).on('close', async () => {
-        await interaction.editReply("Server software downloaded. Running server setup... By using this software, you agree to the Mojang EULA.")
+        await interaction.editReply({ embeds: [buildPresetEmbed("loading", "Server Setup", "Server software downloaded. Running server setup... By using this software, you agree to the Mojang EULA.")] })
         resolve();
       }))
       await new Promise<void>((resolve, _) => setTimeout(resolve, 2500))
@@ -496,17 +511,18 @@ client.on('interactionCreate', async interaction => {
       if (fs.existsSync("./default-server.properties")) {
         fs.copyFileSync("./default-server.properties", "./mc/server.properties")
       }
-      interaction.editReply("Server software selected!!")
+
+      await interaction.editReply({ embeds: [buildPresetEmbed("success", "Server Setup", "Server software has been setup! Launch the server setup by using /start.")] })
     }
 
     else if (subcommand === "select") {
       let software = interaction.options.getString('software');
       // check if folder exists
       if (!fs.existsSync("./" + software + "-server")) {
-        interaction.reply("Server software does not exist.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "Server Selection Error", "Server software does not exist.")] })
         return;
       }
-
+      interaction.deferReply();
       if (fs.existsSync("./mc/")) {
         // deselect by changing name by reading .software file
         //
@@ -517,7 +533,8 @@ client.on('interactionCreate', async interaction => {
         fs.renameSync("./mc/", data + "-server");
       }
       fs.renameSync("./" + software + "-server", "./mc/");
-      await interaction.reply("Server software selected.")
+
+      await interaction.reply({ embeds: [buildPresetEmbed("success", "Server Selection", "Server software selected.")] })
     }
     else if (subcommand === "list") {
       let servers = await fs.promises.readdir("./")
@@ -547,16 +564,18 @@ client.on('interactionCreate', async interaction => {
     else if (subcommand === "remove") {
       let software = interaction.options.getString('software');
       if (!software) {
-        await interaction.reply("No software provided.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "Server Removal Error", "No software to remove provided.")] })
         return;
       }
 
       if (!fs.existsSync("./" + software + "-server")) {
-        await interaction.reply("Server software does not exist or is currently selected. Please switch softwares before removing.")
+        await interaction.reply({ embeds: [buildPresetEmbed("error", "Server Removal Error", "Server software does not exist or is currently selected. Please switch softwares before removing.")] })
         return;
       }
+      interaction.deferReply();
       fs.rmdirSync("./" + software + "-server", { recursive: true });
-      await interaction.reply("Server software Removed");
+
+      await interaction.reply({ embeds: [buildPresetEmbed("success", "Server Removal", "Server software Removed")] })
     }
   }
   else if (interaction.commandName === "config") {
@@ -607,23 +626,25 @@ let remoteStop = (starter: string) => { };
 let runCommand = (command: string) => { };
 
 let online = false;
-function bootupServer(starter: string) {
+function bootupServer(starter: string, settings: { verbose: boolean, verboseMessage?: Message }) {
   // execute the ./start.sh script and have access to std in
   const child = spawn('sh', ['./start.sh'], {
     stdio: ['pipe', process.stdout, process.stderr]
   })
   process.stdin.pipe(child.stdin);
+  if (settings.verbose) {
+  }
   let interval;
   child.on('exit', (code) => {
     clearInterval(interval);
     console.log("Server exited.")
     online = false;
+    sendShutdownMessage("Server exited.")
   })
 
   remoteStop = (starter: string) => {
     child.stdin.write('/stop\r');
     clearInterval(interval);
-    sendShutdownMessage("Server stopped by " + starter)
   }
 
   runCommand = (command) => {
@@ -659,8 +680,12 @@ function bootupServer(starter: string) {
     }, (err, res) => {
       res = res as mc.NewPingResult;
       if (err) {
-        console.log("Server is not ready yet...")
+        console.log("Server connection failed. (not ready)")
         return;
+      }
+
+      if (err && online) {
+        clearInterval(interval_isOnline);
       }
 
       online = true;
