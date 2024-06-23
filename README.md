@@ -19,15 +19,15 @@ specifically for managing a Minecraft server.
 ```bash
 $ git clone https://github.com/Nat3z/mc-discord-bot.git
 ```
-1. Install bun
+2. Install bun
 ```bash
 $ npm install -g bun
 ```
-1. Install dependencies
+3. Install dependencies
 ```bash
 $ bun install
 ```
-1. Copy the .env.example in the parent directory and rename to .env.
+4. Copy the .env.example in the parent directory and rename to .env.
 1. Enable Discord Developer Mode [Guide](https://discord.com/developers/docs/game-sdk/store#)
 1. Go to the [Developer Portal](https://discord.com/developers) and create a new application.
 1. Go to the "Bot" section of your app and create a new bot.
@@ -36,11 +36,10 @@ $ bun install
 1. Go to the main channel where the bot will operate and right click the channel. Click "Copy Channel ID" and paste into the "GENERAL_CHANNEL_ID" field in .env
 1. Right Click on your name and click "Copy User ID." Paste that into the "ADMIN_ID" field in .env
 1. Select a number for how long you want it to take before the server shuts down if no one is online and insert that into the "MINUTES_BEFORE_SHUTDOWN_INACTIVE" field in .env
-1. Run start.sh at least once and agree to the server eula.
 1. Run this command in the parent directory to start the Discord Bot.
 ```bash
 $ bun run app.ts
 ```
-1. Profit!
+14. Profit!
 
 **THIS DISCORD BOT IS STILL IN DEVELOPMENT.** MANY FEATURES WILL CHANGE AND INITIAL SETUP WILL SIMPLIFY.
