@@ -139,7 +139,11 @@ const executeCommand = new SlashCommandBuilder()
 const worldCommand = new SlashCommandBuilder()
   .setName('world')
   .setDescription('Set, add, or remove a world.')
-  .addSubcommand(subcommand => subcommand.setName('add').setDescription("Add a world.").addAttachmentOption(option => option.setName('world').setDescription('The world to add').setRequired(true)))
+  .addSubcommand(subcommand => subcommand.setName('add').setDescription("Add a world.")
+    .addStringOption(option => option.setName('name').setDescription('Name of the world.').setRequired(true))
+    .addAttachmentOption(option => option.setName('world').setDescription('The world to add').setRequired(false))
+    .addStringOption(option => option.setName('url').setDescription('The download url of the world.').setRequired(false))
+  )
   .addSubcommand(subcommand => subcommand.setName('remove').setDescription("Remove a world.").addStringOption(option => option.setName('world').setDescription('The world to remove').setRequired(true)))
   .addSubcommand(subcommand => subcommand.setName('list').setDescription('List all worlds.'))
   .addSubcommand(subcommand => subcommand.setName('set').setDescription("Set the world.").addStringOption(option => option.setName('world').setDescription('The world name to set.').setRequired(true)))
@@ -279,8 +283,10 @@ client.on('interactionCreate', async interaction => {
     }
 
     let subcommand = interaction.options.getSubcommand();
-    if (!fs.existsSync("./mc/mods/")) {
-      fs.mkdirSync("./mc/mods/")
+    let folder = fs.existsSync("./mc/mods/") ? "./mc/mods/" : fs.existsSync("./mc/plugins/") ? "./mc/plugins/" : undefined;
+    if (!folder) {
+      await interaction.reply({ embeds: [buildPresetEmbed("error", "Possibly a vanilla server. (no mods/plugins folder)", "")] })
+      return;
     }
     if (subcommand === 'add') {
       const file = interaction.options.getAttachment('file');
@@ -293,14 +299,14 @@ client.on('interactionCreate', async interaction => {
       // download mod and save it to the ./mods/ folder in the "mc" directory
       // run wget to download it
       //
-      request.get(file.url).pipe(fs.createWriteStream("./mc/mods/" + file.name)).on('close', async () => {
+      request.get(file.url).pipe(fs.createWriteStream(folder + file.name)).on('close', async () => {
 
         await interaction.editReply({ embeds: [buildPresetEmbed("success", "Mod Upload", "Mod `" + file.name + "` added.")] })
       })
     }
     else if (subcommand === 'list') {
       // read files inthe mods folder
-      const mods = await fs.promises.readdir("./mc/mods/")
+      const mods = await fs.promises.readdir(folder)
       if (mods.length === 0) {
         await interaction.reply({ embeds: [buildPresetEmbed("error", "No mods in mod folder.", "")] })
         return
@@ -321,7 +327,7 @@ client.on('interactionCreate', async interaction => {
 
       await interaction.reply({ embeds: [buildPresetEmbed("loading", "Mod Removal", "Removing Mod...")] })
       // remove mod from the mods folder
-      fs.unlink("./mc/mods/" + mod, async (err) => {
+      fs.unlink(folder + mod, async (err) => {
         if (err) {
           await interaction.editReply({ embeds: [buildPresetEmbed("error", "Mod Removal Error", "Failed to remove mod. Reason: " + err.message)] })
         }
@@ -351,11 +357,16 @@ client.on('interactionCreate', async interaction => {
 
     let subcommand = interaction.options.getSubcommand();
     if (subcommand === 'add') {
-      let world = interaction.options.getAttachment('world');
-      if (!world) {
+      let name = interaction.options.getString('name')!!;
+      let worldFile = interaction.options.getAttachment('world');
+      let world: { name: string, url: string } | undefined = undefined;
+      if (!worldFile) {
+        if (interaction.options.getString('url')) world = { name, url: interaction.options.getString('url')!! }
         await interaction.reply({ embeds: [buildPresetEmbed("error", "World Switcher Error", "No world provided.")] })
         return;
       }
+      else
+        world = { name, url: worldFile.url }
 
       await interaction.reply({ embeds: [buildPresetEmbed("loading", "World Switcher", "Adding World...")] })
       fs.mkdir("./mc/worlds/" + world.name, { recursive: true }, (err) => { console.error(err) })
