@@ -283,7 +283,7 @@ client.on('interactionCreate', async interaction => {
     remoteStop(interaction.user.username);
   }
   else if (interaction.commandName === 'execute') {
-    if (await checkPermissions(true, interaction.user)) {
+    if (!await checkPermissions(true, interaction.user)) {
       await interaction.reply({ embeds: [buildPresetEmbed("error", "You cannot do this action.", "")] })
       return;
     }
@@ -302,7 +302,7 @@ client.on('interactionCreate', async interaction => {
   }
   else if (interaction.commandName === 'mod') {
     if (!checkIfServerSelected(interaction)) return;
-    if (await checkPermissions(true, interaction.user)) {
+    if (!await checkPermissions(true, interaction.user)) {
       await interaction.reply({ embeds: [buildPresetEmbed("error", "You cannot do this action.", "")] })
       return;
     }
@@ -364,7 +364,7 @@ client.on('interactionCreate', async interaction => {
   }
   else if (interaction.commandName === 'world') {
     if (!checkIfServerSelected(interaction)) return;
-    if (await checkPermissions(true, interaction.user)) {
+    if (!await checkPermissions(true, interaction.user)) {
       await interaction.reply({ embeds: [buildPresetEmbed("error", "You cannot do this action.", "")] })
       return;
     }
@@ -500,7 +500,7 @@ client.on('interactionCreate', async interaction => {
   }
 
   else if (interaction.commandName === 'server') {
-    if (await checkPermissions(true, interaction.user)) {
+    if (!await checkPermissions(true, interaction.user)) {
       await interaction.reply({ embeds: [buildPresetEmbed("error", "You cannot do this action.", "")] })
       return;
     }
