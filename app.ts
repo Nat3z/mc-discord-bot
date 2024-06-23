@@ -564,7 +564,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ embeds: [buildPresetEmbed("error", "Server Selection Error", "Server software does not exist.")] })
         return;
       }
-      interaction.deferReply();
+      await interaction.deferReply();
       if (fs.existsSync("./mc/")) {
         // deselect by changing name by reading .software file
         //
@@ -576,7 +576,7 @@ client.on('interactionCreate', async interaction => {
       }
       fs.renameSync("./" + software + "-server", "./mc/");
 
-      await interaction.reply({ embeds: [buildPresetEmbed("success", "Server Selection", "Server software selected.")] })
+      await interaction.editReply({ embeds: [buildPresetEmbed("success", "Server Selection", "Server software selected.")] })
     }
     else if (subcommand === "list") {
       let servers = await fs.promises.readdir("./")
